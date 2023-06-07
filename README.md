@@ -21,4 +21,4 @@ check on the diff column and check it is between 0 and 100. This way we have mad
 Implementation issues: 
 - chip and config, where to put what
 - implementation of bubble sort
-- - how to access the ith and (i+1)th element of array
+ - how to access the ith and (i+1)th element of array
