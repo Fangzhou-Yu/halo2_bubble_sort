@@ -31,6 +31,10 @@ struct BubbleSortConfig <F: FieldExt>{
 }
 
 
+/// Todo
+/// Add Implementation of BubbleSortConfig to assign value of diff and make sure it is within some range
+/// Let's hard code the range to 0,127
+
 #[derive(Debug, Clone)]
 struct BubbleSortChip<F:  FieldExt> {
     config: BubbleSortConfig<F>,
