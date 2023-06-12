@@ -529,10 +529,8 @@ dependencies = [
  "ff",
  "group",
  "pasta_curves",
- "plotters",
  "rand_core",
  "rayon",
- "tabbycat",
 ]
 
 [[package]]
