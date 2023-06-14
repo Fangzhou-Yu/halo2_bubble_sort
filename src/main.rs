@@ -4,7 +4,7 @@ use halo2_proofs::{
     arithmetic::FieldExt,
     circuit::*,
     plonk::*,
-    poly::Rotation,
+    poly::Rotation
 };
 
 #[derive(Clone)]
@@ -90,7 +90,7 @@ impl<F: FieldExt> BubSortChip<F> {
             || "first row",
             |mut region| {
                 // enable the selector
-                self.config.s.enable(&mut region, 0)?;
+                self.config.s.enable(&mut region, 1)?;
 
 
                 let a_num = region.assign_advice_from_instance(
@@ -139,19 +139,34 @@ impl<F: FieldExt> BubSortChip<F> {
         prev_b: &AssignedCell<F,F>,
         prev_c: &AssignedCell<F,F>,
         prev_d: &AssignedCell<F,F>,
+        offset: usize,
     ) -> Result<(AssignedCell<F,F>, AssignedCell<F,F>, AssignedCell<F,F>, AssignedCell<F,F>), Error> {
         // do a compare & swap and assign a new region
+        println!("offset: {:?}\n", offset);
         let mut arr = [prev_a.value().clone(), prev_b.value().clone(), prev_c.value().clone(), prev_d.value().clone()];
         for idx in 0..3 {
-            let a = arr[idx];
-            let b = arr[idx+1];
+            let a = arr[idx].clone();
+            let b = arr[idx+1].clone();
+            let is_greater = a.zip(b).map(|(a, b)| a > b);
+            let output = format!("{:?}", is_greater);
+            let is_true = if output.contains("true") {
+                true
+            } else {
+                false
+            };
+            if is_true {
+                arr.swap(idx, idx+1);
+            }
 
-            // compare two values and swap if needed
         }
         let a_val = arr[0];
+        println!("a: {:?}\n", a_val);
         let b_val = arr[1];
+        println!("b: {:?}\n", b_val);
         let c_val = arr[2];
+        println!("c: {:?}\n", c_val);
         let d_val = arr[3];
+        println!("d: {:?}\n", d_val);
 
         // now load new sorted values into new row 
 
@@ -161,7 +176,7 @@ impl<F: FieldExt> BubSortChip<F> {
             || "next row",
             |mut region| {
                 // enable the selector
-                self.config.s.enable(&mut region, 0)?;
+                self.config.s.enable(&mut region, offset)?;
 
                 // Maybe jusy copy every value over instead?
                 
@@ -170,7 +185,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let a_cell = region.assign_advice(
                     || "a",
                     self.config.a,
-                    0,
+                    offset,
                     || a_val.copied(),
                 )?;
 
@@ -178,7 +193,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let b_cell = region.assign_advice(
                     || "b",
                     self.config.b,
-                    0,
+                    offset,
                     || b_val.copied(),
                 )?;
 
@@ -186,7 +201,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let c_cell = region.assign_advice(
                     || "c",
                     self.config.c,
-                    0,
+                    offset,
                     || c_val.copied(),
                 )?;
 
@@ -194,7 +209,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let d_cell = region.assign_advice(
                     || "d",
                     self.config.d,
-                    0,
+                    offset,
                     || d_val.copied(),
                 )?;
 
@@ -207,12 +222,7 @@ impl<F: FieldExt> BubSortChip<F> {
 }
 
 #[derive(Default)]
-struct BubSortCircuit<F> {
-    a: F,
-    b: F,
-    c: F,
-    d: F,
-}
+struct BubSortCircuit<F> (PhantomData<F>);
 
 impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
     type Config = BubSortConfig;
@@ -235,13 +245,15 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         let (mut prev_a, mut prev_b, mut prev_c, mut prev_d) = chip.load_first_row(
             layouter.namespace(|| "first row"),
         )?;
-        for _ in 0..4 {
+        for round in 2..6 {
+            let offset: usize = round-2;
             let (a, b, c, d) = chip.load_row(
-                layouter.namespace(|| "row"),
+                layouter.namespace(|| "next row"),
                 &prev_a,
                 &prev_b,
                 &prev_c,
                 &prev_d,
+                offset,
             )?;
             prev_a = a;
             prev_b = b;
@@ -254,23 +266,23 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
 
 
 fn main() {
+    use std::marker::PhantomData;
     use halo2_proofs::{dev::MockProver, pasta::Fp};
     // Prepare the private and public inputs to the circuit!
+    let a = Fp::from(100);
+    let b = Fp::from(90);
+    let c = Fp::from(80);
+    let d = Fp::from(70);
 
     // Instantiate the circuit with the private inputs.
-    let circuit = BubSortCircuit {
-        a: Fp::from(12),
-        b: Fp::from(43),
-        c: Fp::from(765),
-        d: Fp::from(83),
-    };
-
+    let circuit = BubSortCircuit(PhantomData);
+    let mut public_input = vec![a,b,c,d];
 
     // Set circuit size
-    let k = 4;
+    let k = 5;
 
     // Given the correct public input, our circuit will verify.
-    let prover = MockProver::run(k, &circuit, vec![]).unwrap();
-    assert_eq!(prover.verify(), Ok(()));
+    let prover = MockProver::run(k, &circuit, vec![vec![a], vec![b], vec![c], vec![d]]).unwrap();
+    prover.assert_satisfied();
 }
 
