@@ -144,6 +144,15 @@ impl<F: FieldExt> BubSortChip<F> {
         // do a compare & swap and assign a new region
         println!("offset: {:?}\n", offset);
         let mut arr = [prev_a.value().clone(), prev_b.value().clone(), prev_c.value().clone(), prev_d.value().clone()];
+
+        println!("a_unsorted: {:?}\n", arr[0]);
+
+        println!("b_unsorted: {:?}\n", arr[1]);
+
+        println!("c_unsorted: {:?}\n", arr[2]);
+  
+        println!("d_unsorted: {:?}\n", arr[3]);
+        
         for idx in 0..3 {
             let a = arr[idx].clone();
             let b = arr[idx+1].clone();
@@ -175,8 +184,7 @@ impl<F: FieldExt> BubSortChip<F> {
         Ok(layouter.assign_region(
             || "next row",
             |mut region| {
-                // enable the selector
-                self.config.s.enable(&mut region, offset)?;
+                
 
                 // Maybe jusy copy every value over instead?
                 
@@ -185,7 +193,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let a_cell = region.assign_advice(
                     || "a",
                     self.config.a,
-                    offset,
+                    0,
                     || a_val.copied(),
                 )?;
 
@@ -193,7 +201,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let b_cell = region.assign_advice(
                     || "b",
                     self.config.b,
-                    offset,
+                    0,
                     || b_val.copied(),
                 )?;
 
@@ -201,7 +209,7 @@ impl<F: FieldExt> BubSortChip<F> {
                 let c_cell = region.assign_advice(
                     || "c",
                     self.config.c,
-                    offset,
+                    0,
                     || c_val.copied(),
                 )?;
 
@@ -209,9 +217,12 @@ impl<F: FieldExt> BubSortChip<F> {
                 let d_cell = region.assign_advice(
                     || "d",
                     self.config.d,
-                    offset,
+                    0,
                     || d_val.copied(),
                 )?;
+
+                // enable the selector
+                self.config.s.enable(&mut region, 0)?;
 
                 Ok((a_cell, b_cell, c_cell, d_cell))
             },
@@ -245,8 +256,9 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         let (mut prev_a, mut prev_b, mut prev_c, mut prev_d) = chip.load_first_row(
             layouter.namespace(|| "first row"),
         )?;
-        for round in 2..6 {
-            let offset: usize = round-2;
+        // rows in the table
+        for round in 2..5 {
+            let offset: usize = round;
             let (a, b, c, d) = chip.load_row(
                 layouter.namespace(|| "next row"),
                 &prev_a,
@@ -276,7 +288,7 @@ fn main() {
 
     // Instantiate the circuit with the private inputs.
     let circuit = BubSortCircuit(PhantomData);
-    let mut public_input = vec![a,b,c,d];
+    let public_input = vec![a,b,c,d];
 
     // Set circuit size
     let k = 5;

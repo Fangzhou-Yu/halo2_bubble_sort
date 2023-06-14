@@ -369,5 +369,4 @@ error: constraint not satisfied
     x6 = 0x64
     x7 = 0
 
-thread 'main' panicked at 'circuit was not satisfied', C:\Users\AERO\.cargo\git\checkouts\halo2-d6fd4df1666d8b25\a898d65\halo2_proofs\src\dev.rs:873:13
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+thread 'main' panicked at 'circuit was not satisfied'
