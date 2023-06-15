@@ -164,8 +164,7 @@ impl<F: FieldExt> BubSortChip<F> {
         )
     }
 
-
-    /// JUST THIS FUCKING FUNC NOW
+    // this function performs a compare (and swap if necessary) on two designated cells
     fn load_row(
         &self,
         mut layouter: impl Layouter<F>,
