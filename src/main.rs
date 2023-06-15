@@ -1,5 +1,4 @@
-use std::{marker::PhantomData};
-
+use std::marker::PhantomData;
 use halo2_proofs::{
     arithmetic::FieldExt,
     circuit::*,
@@ -21,7 +20,16 @@ struct BubSortConfig {
     b_0 : Column<Instance>,
     c_0 : Column<Instance>,
     d_0 : Column<Instance>,
-    s: Selector,
+    // used to check value after swapping, we could add another set to check unswapped values but
+    // I am not doing that here
+    s_a: Selector,
+    s_b: Selector,
+    s_c: Selector,
+    s_d: Selector,
+    s_unchanged_a: Selector,
+    s_unchanged_b: Selector,
+    s_unchanged_c: Selector,
+    s_unchanged_d: Selector,
 }
 
 // The chip that configures the gate and fills in the witness
@@ -50,7 +58,14 @@ impl<F: FieldExt> BubSortChip<F> {
         let b_0 = meta.instance_column();
         let c_0 = meta.instance_column();
         let d_0 = meta.instance_column();
-        let s = meta.selector();
+        let s_a = meta.complex_selector();
+        let s_b = meta.complex_selector();
+        let s_c = meta.complex_selector();
+        let s_d = meta.complex_selector();
+        let s_unchanged_a = meta.selector();
+        let s_unchanged_b = meta.selector();
+        let s_unchanged_c = meta.selector();
+        let s_unchanged_d = meta.selector();
 
         // enable permutation checks for the following columns
         meta.enable_equality(a);
@@ -64,20 +79,42 @@ impl<F: FieldExt> BubSortChip<F> {
 
         // define the custom gate
         meta.create_gate("swap", |meta| {
-            let s = meta.query_selector(s);
-            let term_a = meta.query_advice(a, Rotation::cur());
-            let term_b = meta.query_advice(b, Rotation::cur());
-            let term_c = meta.query_advice(c, Rotation::cur());
-            let term_d = meta.query_advice(d, Rotation::cur());
-            let term_a_next = meta.query_advice(a, Rotation::next());
-            let term_b_next = meta.query_advice(b, Rotation::next());
-            let term_c_next = meta.query_advice(c, Rotation::next());
-            let term_d_next = meta.query_advice(d, Rotation::next());
-            vec![s * (term_a + term_b + term_c + term_d - term_a_next - term_b_next - term_c_next - term_d_next)]
+            // selector for swapped columns
+            let s_a = meta.query_selector(s_a);
+            let s_b = meta.query_selector(s_b);
+            let s_c = meta.query_selector(s_c);
+            let s_d = meta.query_selector(s_d);
+            // unchanged selector
+            let s_a2 = meta.query_selector(s_unchanged_a);
+            let s_b2 = meta.query_selector(s_unchanged_b);
+            let s_c2 = meta.query_selector(s_unchanged_c);
+            let s_d2 = meta.query_selector(s_unchanged_d);
+
+            let a_cur = meta.query_advice(a, Rotation::cur());
+            let b_cur = meta.query_advice(b, Rotation::cur());
+            let c_cur = meta.query_advice(c, Rotation::cur());
+            let d_cur = meta.query_advice(d, Rotation::cur());
+
+            let a_next = meta.query_advice(a, Rotation::next());
+            let b_next = meta.query_advice(b, Rotation::next());
+            let c_next = meta.query_advice(c, Rotation::next());
+            let d_next = meta.query_advice(d, Rotation::next());
+
+            // first row is all unchanged
+            // swapped x and y
+            // => x_prev - x + y_prev - y = 0
+            vec![s_a2*(a_next.clone() - a_cur.clone()),
+                s_b2*(b_next.clone() - b_cur.clone()),
+                s_c2*(c_next.clone() - c_cur.clone()),
+                s_d2*(d_next.clone() - d_cur.clone()),
+                s_a*(a_next - a_cur) + s_b*(b_next - b_cur) + s_c*(c_next - c_cur) + s_d*(d_next - d_cur)]
         });
 
         BubSortConfig {
-            a, b, c, d, a_0, b_0, c_0, d_0, s,
+            a, b, c, d, 
+            a_0, b_0, c_0, d_0, 
+            s_a, s_b, s_c, s_d,
+            s_unchanged_a, s_unchanged_b, s_unchanged_c, s_unchanged_d,
         }
     }
 
@@ -89,9 +126,6 @@ impl<F: FieldExt> BubSortChip<F> {
         layouter.assign_region(
             || "first row",
             |mut region| {
-                // enable the selector
-                self.config.s.enable(&mut region, 1)?;
-
 
                 let a_num = region.assign_advice_from_instance(
                     || "a",
@@ -139,96 +173,154 @@ impl<F: FieldExt> BubSortChip<F> {
         prev_b: &AssignedCell<F,F>,
         prev_c: &AssignedCell<F,F>,
         prev_d: &AssignedCell<F,F>,
-        offset: usize,
+        idx: usize,
     ) -> Result<(AssignedCell<F,F>, AssignedCell<F,F>, AssignedCell<F,F>, AssignedCell<F,F>), Error> {
-        // do a compare & swap and assign a new region
-        println!("offset: {:?}\n", offset);
+        // do one compare & swap and assign a new region
         let mut arr = [prev_a.value().clone(), prev_b.value().clone(), prev_c.value().clone(), prev_d.value().clone()];
 
-        println!("a_unsorted: {:?}\n", arr[0]);
-
-        println!("b_unsorted: {:?}\n", arr[1]);
-
-        println!("c_unsorted: {:?}\n", arr[2]);
-  
-        println!("d_unsorted: {:?}\n", arr[3]);
-        
-        for idx in 0..3 {
-            let a = arr[idx].clone();
-            let b = arr[idx+1].clone();
-            let is_greater = a.zip(b).map(|(a, b)| a > b);
-            let output = format!("{:?}", is_greater);
-            let is_true = if output.contains("true") {
-                true
-            } else {
-                false
-            };
-            if is_true {
-                arr.swap(idx, idx+1);
-            }
-
+        // compare
+        let a = arr[idx].clone();
+        let b = arr[idx+1].clone();
+        let is_greater = a.zip(b).map(|(a, b)| a > b);
+        let output = format!("{:?}", is_greater);
+        let is_true = if output.contains("true") {
+            true
+        } else {
+            false
+        };
+        if is_true {
+            arr.swap(idx, idx+1);
         }
         let a_val = arr[0];
-        println!("a: {:?}\n", a_val);
         let b_val = arr[1];
-        println!("b: {:?}\n", b_val);
         let c_val = arr[2];
-        println!("c: {:?}\n", c_val);
         let d_val = arr[3];
-        println!("d: {:?}\n", d_val);
 
-        // now load new sorted values into new row 
+        if is_true {
+            Ok(layouter.assign_region(
+                || "swap and assign to next row",
+                |mut region| {               
+                    // enable only unchanged
+                    if idx == 0 {
+                        self.config.s_a.enable(&mut region, 0)?;
+                        self.config.s_b.enable(&mut region, 0)?;
+                        self.config.s_unchanged_c.enable(&mut region, 0)?;
+                        self.config.s_unchanged_d.enable(&mut region, 0)?;
 
-        /// DEBUG
+                    } else if idx == 1{
+                        self.config.s_b.enable(&mut region, 0)?;
+                        self.config.s_c.enable(&mut region, 0)?;
+                        self.config.s_unchanged_a.enable(&mut region, 0)?;
+                        self.config.s_unchanged_d.enable(&mut region, 0)?;
 
-        Ok(layouter.assign_region(
-            || "next row",
-            |mut region| {
-                
+                    } else if idx == 2{
+                        self.config.s_c.enable(&mut region, 0)?;
+                        self.config.s_d.enable(&mut region, 0)?;
+                        self.config.s_unchanged_a.enable(&mut region, 0)?;
+                        self.config.s_unchanged_b.enable(&mut region, 0)?;
 
-                // Maybe jusy copy every value over instead?
-                
+                    }
+                    // row 1 
+                    prev_a.copy_advice(||"copied", &mut region,self.config.a,0,)?;
+                    prev_b.copy_advice(||"copied", &mut region,self.config.b,0,)?;
+                    prev_c.copy_advice(||"copied", &mut region,self.config.c,0,)?;
+                    prev_d.copy_advice(||"copied", &mut region,self.config.d,0,)?;
+                    
+                    // row 2
+                    // a
+                    let a_cell = region.assign_advice(
+                        || "a",
+                        self.config.a,
+                        1,
+                        || a_val.copied(),
+                    )?;
+    
+                    // b
+                    let b_cell = region.assign_advice(
+                        || "b",
+                        self.config.b,
+                        1,
+                        || b_val.copied(),
+                    )?;
+    
+                    // c
+                    let c_cell = region.assign_advice(
+                        || "c",
+                        self.config.c,
+                        1,
+                        || c_val.copied(),
+                    )?;
+    
+                    // d
+                    let d_cell = region.assign_advice(
+                        || "d",
+                        self.config.d,
+                        1,
+                        || d_val.copied(),
+                    )?;
+    
+                    
+                    Ok((a_cell, b_cell, c_cell, d_cell))
+                },
+            )?)
+        } else {
+            // no swap happens
+            Ok(layouter.assign_region(
+                || "no swap",
+                |mut region| { 
+                    // copy unchanged over           
+                    self.config.s_unchanged_a.enable(&mut region, 0)?;
+                    self.config.s_unchanged_b.enable(&mut region, 0)?;
+                    self.config.s_unchanged_c.enable(&mut region, 0)?;
+                    self.config.s_unchanged_d.enable(&mut region, 0)?;
+                    prev_a.copy_advice(||"copied", &mut region,self.config.a,0,)?;
+                    prev_b.copy_advice(||"copied", &mut region,self.config.b,0,)?;
+                    prev_c.copy_advice(||"copied", &mut region,self.config.c,0,)?;
+                    prev_d.copy_advice(||"copied", &mut region,self.config.d,0,)?;
 
-                // a
-                let a_cell = region.assign_advice(
-                    || "a",
-                    self.config.a,
-                    0,
-                    || a_val.copied(),
-                )?;
 
-                // b
-                let b_cell = region.assign_advice(
-                    || "b",
-                    self.config.b,
-                    0,
-                    || b_val.copied(),
-                )?;
+                    // next row in the region
 
-                // c
-                let c_cell = region.assign_advice(
-                    || "c",
-                    self.config.c,
-                    0,
-                    || c_val.copied(),
-                )?;
-
-                // d
-                let d_cell = region.assign_advice(
-                    || "d",
-                    self.config.d,
-                    0,
-                    || d_val.copied(),
-                )?;
-
-                // enable the selector
-                self.config.s.enable(&mut region, 0)?;
-
-                Ok((a_cell, b_cell, c_cell, d_cell))
-            },
-        )?)
-        
+                    // a
+                    let a_cell = region.assign_advice(
+                        || "a",
+                        self.config.a,
+                        1,
+                        || a_val.copied(),
+                    )?;
+    
+                    // b
+                    let b_cell = region.assign_advice(
+                        || "b",
+                        self.config.b,
+                        1,
+                        || b_val.copied(),
+                    )?;
+    
+                    // c
+                    let c_cell = region.assign_advice(
+                        || "c",
+                        self.config.c,
+                        1,
+                        || c_val.copied(),
+                    )?;
+    
+                    // d
+                    let d_cell = region.assign_advice(
+                        || "d",
+                        self.config.d,
+                        1,
+                        || d_val.copied(),
+                    )?;
+    
+                    
+                    Ok((a_cell, b_cell, c_cell, d_cell))
+                },
+            )?)
+        }
+            
     }
+
 
 }
 
@@ -257,28 +349,29 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
             layouter.namespace(|| "first row"),
         )?;
         // rows in the table
-        for round in 2..5 {
-            let offset: usize = round;
-            let (a, b, c, d) = chip.load_row(
-                layouter.namespace(|| "next row"),
-                &prev_a,
-                &prev_b,
-                &prev_c,
-                &prev_d,
-                offset,
-            )?;
-            prev_a = a;
-            prev_b = b;
-            prev_c = c;
-            prev_d = d;
+        for _round in 1..4 {
+            for idx in 0..3 {
+                let (a, b, c, d) = chip.load_row(
+                    layouter.namespace(|| "next row"),
+                    &prev_a,
+                    &prev_b,
+                    &prev_c,
+                    &prev_d,
+                    idx,
+                )?;
+                prev_a = a;
+                prev_b = b;
+                prev_c = c;
+                prev_d = d;
+            }
         }
+
         Ok(())
     }
 }
 
 
 fn main() {
-    use std::marker::PhantomData;
     use halo2_proofs::{dev::MockProver, pasta::Fp};
     // Prepare the private and public inputs to the circuit!
     let a = Fp::from(100);
@@ -288,10 +381,9 @@ fn main() {
 
     // Instantiate the circuit with the private inputs.
     let circuit = BubSortCircuit(PhantomData);
-    let public_input = vec![a,b,c,d];
 
     // Set circuit size
-    let k = 5;
+    let k = 6;
 
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![vec![a], vec![b], vec![c], vec![d]]).unwrap();
