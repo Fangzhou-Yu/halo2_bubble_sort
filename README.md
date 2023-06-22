@@ -1,6 +1,8 @@
 # halo2_bubble_sort
 ### Fangzhou Yu
 
+Check main.rs
+
 ## Goal
 Given an unsorted array as input, use bubble sort algorithm to sort the array within the circuit implemented using halo2.
 
