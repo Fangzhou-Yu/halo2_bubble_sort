@@ -83,7 +83,7 @@ impl<F: FieldExt> CompareChip<F>{
             let s_comp = meta.query_selector(s_comp);
 
             // make sure cond is 1 when result is lhs, cond is 0 when result is rhs
-            vec![s_comp*(rhs - result - cond*rhs + cond*lhs)] 
+            vec![s_comp*(rhs.clone() - result - cond.clone()*rhs + cond*lhs)] 
         });
 
         CompareConfig {
@@ -139,30 +139,39 @@ impl<F: FieldExt> CompareChip<F>{
         &self, 
         region: &mut Region<F>,
         arr: &mut [Limb<F>; 5],
+        offset: &mut usize,
         idx: usize,
     ) -> Result<[Limb<F>; 5], Error>{
         let lhs = arr[idx].clone();
         let rhs = arr[idx+1].clone();
-        let x = u32::pow(2,8);
-        let y = F::from(x) - (rhs.value - lhs.value);
+        // 先把a和b都转换成二进制
+        // a和b做减法然后看diff+2^x
+
+        // let x = u32::pow(2,8);
+        // let y = F::from(x) - (rhs.value - lhs.value);
         // now check first digit of y
-        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 32);  // u32 values
-        let cond = y_bin[0];
+
+        let x = F::from(127);
+        // check if y has 1 on first digit: 1xxxxxxx
+        let y = x - (lhs.value - rhs.value);
+        // this limits largest ele of nums to be 127
+        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 8); 
+        let cond = y_bin[0].clone();
         let result_1 = if cond.value == F::one() {lhs.clone()} else {rhs.clone()};
         // constrain condition
-        region.assign_advice(|| "lhs", self.config.lhs, 0, || Ok(lhs.value))?;
-        region.assign_advice(|| "rhs", self.config.rhs, 0, || Ok(rhs.value))?;
-        region.assign_advice(|| "cond", self.config.cond, 0, || Ok(cond.value))?;
-        result_1.cell.unwrap().copy_advice(|| "result", region, self.config.result, 0)?;        
-        self.config.s_comp.enable(region, 0);
+        region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
+        region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
+        region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
+        result_1.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
+        self.config.s_comp.enable(region, *offset);
 
 
         let result_2 = if cond.value == F::zero() {rhs.clone()} else {lhs.clone()};
-        region.assign_advice(|| "lhs", self.config.lhs, 0, || Ok(lhs.value))?;
-        region.assign_advice(|| "rhs", self.config.rhs, 0, || Ok(rhs.value))?;
-        region.assign_advice(|| "cond", self.config.cond, 0, || Ok(cond.value))?;
-        result_2.cell.unwrap().copy_advice(|| "result", region, self.config.result, 0)?;        
-        self.config.s_comp.enable(region, 0);
+        region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
+        region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
+        region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
+        result_2.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
+        self.config.s_comp.enable(region, *offset);
 
         arr[idx] = result_1.clone();
         arr[idx+1] = result_2.clone();
@@ -215,7 +224,8 @@ impl<F: FieldExt> MainChip<F> {
         b: F,
         c: F,
         d: F,
-        e: F) -> Result<(Limb<F>, Limb<F>, Limb<F>, Limb<F>, Limb<F>), Error> {
+        e: F
+    ) -> Result<(Limb<F>, Limb<F>, Limb<F>, Limb<F>, Limb<F>), Error> {
             layouter.assign_region(||"first row", |mut region| {
                 let a_cell = region.assign_advice(
                     ||"a_0",
@@ -269,13 +279,14 @@ impl<F: FieldExt> MainChip<F> {
         c: &Limb<F>,
         d: &Limb<F>,
         e: &Limb<F>,
+        offset: &mut usize,
     ) -> Result<(), Error> {
         // use copy advice to do permutation checks
-        a.cell.unwrap().copy_advice(||"copied", region,self.config.nums[0],0,)?;
-        b.cell.unwrap().copy_advice(||"copied", region,self.config.nums[1],0,)?;
-        c.cell.unwrap().copy_advice(||"copied", region,self.config.nums[2],0,)?;
-        d.cell.unwrap().copy_advice(||"copied", region,self.config.nums[3],0,)?;
-        e.cell.unwrap().copy_advice(||"copied", region,self.config.nums[4],0,)?;
+        a.cell.clone().unwrap().copy_advice(||"copied", region,self.config.nums[0],*offset,)?;
+        b.cell.clone().unwrap().copy_advice(||"copied", region,self.config.nums[1],*offset,)?;
+        c.cell.clone().unwrap().copy_advice(||"copied", region,self.config.nums[2],*offset,)?;
+        d.cell.clone().unwrap().copy_advice(||"copied", region,self.config.nums[3],*offset,)?;
+        e.cell.clone().unwrap().copy_advice(||"copied", region,self.config.nums[4],*offset,)?;
         Ok(())
     }
 }
@@ -302,8 +313,9 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>
     ) -> Result<(), Error> {
-        let chip = MainChip::construct(config);
-        let (mut prev_a, mut prev_b, mut prev_c, mut prev_d, mut prev_e) = chip.load_first_row(
+        let chip = MainChip::construct(config.clone());
+        let comp_chip = CompareChip::construct(config.clone().compareconfig);
+        let ( prev_a,  prev_b,  prev_c,  prev_d,  prev_e) = chip.load_first_row(
             layouter.namespace(|| "first row"),
             self.arr[0],
             self.arr[1],
@@ -313,18 +325,21 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         )?;
         // rows in the table
         let mut v = [prev_a, prev_b, prev_c, prev_d, prev_e];
-        for _round in 1..5 {
-            for idx in 0..4 {
-                layouter.assign_region(|| "row", |mut region|{
-                    let v = chip.select(& region, &mut v, idx)?;
-                    chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4])?;
-                },);
+        layouter.assign_region(|| "row", |mut region|{
+            for round in 1..5 {
+                let mut offset = round;
+                for idx in 0..4 {
+                    let idx: usize = idx as usize;
+                    let v = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
+                    chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4], &mut offset)?;
+                }
             }
-        }
-
-        Ok(())
+            Ok(())
+        },)
     }
+
 }
+
 
 
 fn main(){

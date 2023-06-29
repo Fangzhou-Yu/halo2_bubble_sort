@@ -32,6 +32,14 @@ struct BubSortConfig {
     s_unchanged_d: Selector,
 }
 
+// need a chip to perform compare
+// we need decompose and compare
+// fn decompose 
+// fn compare
+// do: get F: 1111111, subtract Value
+// use value api
+
+
 // The chip that configures the gate and fills in the witness
 struct BubSortChip<F: FieldExt> {
     config: BubSortConfig,
