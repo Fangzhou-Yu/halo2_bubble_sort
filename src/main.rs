@@ -7,7 +7,7 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use num_bigint::BigUint;
-   use halo2_proofs::pairing::bn256::Fr;
+use halo2_proofs::pairing::bn256::Fr;
 
 
 // borrowed from 
@@ -82,7 +82,7 @@ impl<F: FieldExt> CompareChip<F>{
             let result = meta.query_advice(result, Rotation::cur());
             let s_comp = meta.query_selector(s_comp);
 
-            // make sure cond is 1 when result is lhs, cond is 0 when result is rhs
+            // make sure cond is 0 when result is lhs, cond is 1 when result is rhs
             vec![s_comp*(lhs.clone() - result - cond.clone()*lhs + cond*rhs)] 
         });
 
@@ -146,18 +146,29 @@ impl<F: FieldExt> CompareChip<F>{
         let rhs = arr[idx+1].clone();
 
         let x = F::from(256);
-        // check if y has 1 on first digit: 1xxxxxxx, so a > b, a comes second
+        // x has form 10000000
+        // now we do y = x - (b - a), if b > a, y would be 0xxxxxxx we return (a,b)
+        // o.w we return (b,a)
         let y = x - (lhs.value - rhs.value);
-        // this limits largest ele of nums to be 127
         let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 8); 
         let cond = y_bin[0].clone();
-        let (result_1, result_2) = if cond.value == F::zero() {(lhs.clone(), rhs.clone())} else {(rhs.clone(), lhs.clone())};
+        let result_1 = if cond.value == F::zero() {lhs.clone()} else {rhs.clone()};
         // constrain condition
         region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
         region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
         region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
-        result_1.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
+        region.assign_advice(|| "result 1, smaller", self.config.result, *offset, || Ok(result_1.clone().value))?;       
         self.config.s_comp.enable(region, *offset)?;
+        // this next row is for the bigger one
+        *offset += 1;
+        // if cond val is one, it means b < a, so we choose a to be greater
+        let result_2 = if cond.value == F::one() {rhs.clone()} else {lhs.clone()};
+        region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
+        region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
+        region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
+        region.assign_advice(|| "result 2, bigger", self.config.result, *offset, || Ok(result_2.clone().value))?;       
+        self.config.s_comp.enable(region, *offset)?;
+
 
         arr[idx] = result_1.clone();
         arr[idx+1] = result_2.clone();
@@ -315,13 +326,13 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         // done in the same region
         layouter.assign_region(|| "row", |mut region|{
             let mut offset = 1;
-            for round in 0..5 {      
+            for _round in 0..5 {      
                 for idx in 0..4 {
                     let idx: usize = idx as usize;
                     let v: [Limb<F>; 5] = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
-                    offset = offset + 1;
+                    offset += 1;
                     chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4], &mut offset)?;
-                    offset = offset + 1;
+                    offset += 1;
                     // for element in &v {
                     //     println!("{:?}", element.value);
                     // }
