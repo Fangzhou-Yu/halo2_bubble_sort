@@ -151,20 +151,19 @@ impl<F: FieldExt> CompareChip<F>{
         // let y = F::from(x) - (rhs.value - lhs.value);
         // now check first digit of y
 
-        let x = F::from(127);
+        let x = F::from(256);
         // check if y has 1 on first digit: 1xxxxxxx
         let y = x - (lhs.value - rhs.value);
         // this limits largest ele of nums to be 127
-        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 32); 
+        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 8); 
         let cond = y_bin[0].clone();
-        let result_1 = if cond.value == F::zero() {lhs.clone()} else {rhs.clone()};
+        let (result_1, result_2) = if cond.value == F::zero() {(lhs.clone(), rhs.clone())} else {(rhs.clone(), lhs.clone())};
         // constrain condition
         region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
         region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
         region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
         result_1.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
         self.config.s_comp.enable(region, *offset)?;
-        let result_2 = if cond.value == F::zero() {rhs.clone()} else {lhs.clone()};
 
         arr[idx] = result_1.clone();
         arr[idx+1] = result_2.clone();
@@ -326,9 +325,9 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
                     let idx: usize = idx as usize;
                     let v: [Limb<F>; 5] = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
                     chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4], &mut offset)?;
-                    // for element in &v {
-                    //     println!("{:?}", element.value);
-                    // }
+                    for element in &v {
+                        println!("{:?}", element.value);
+                    }
                 }
             }
             Ok(())
