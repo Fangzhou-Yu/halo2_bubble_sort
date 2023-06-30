@@ -144,15 +144,9 @@ impl<F: FieldExt> CompareChip<F>{
     ) -> Result<[Limb<F>; 5], Error>{
         let lhs = arr[idx].clone();
         let rhs = arr[idx+1].clone();
-        // 先把a和b都转换成二进制
-        // a和b做减法然后看diff+2^x
-
-        // let x = u32::pow(2,8);
-        // let y = F::from(x) - (rhs.value - lhs.value);
-        // now check first digit of y
 
         let x = F::from(256);
-        // check if y has 1 on first digit: 1xxxxxxx
+        // check if y has 1 on first digit: 1xxxxxxx, so a > b, a comes second
         let y = x - (lhs.value - rhs.value);
         // this limits largest ele of nums to be 127
         let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 8); 
@@ -318,16 +312,19 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         )?;
         // rows in the table
         let mut v = [prev_a, prev_b, prev_c, prev_d, prev_e];
+        // done in the same region
         layouter.assign_region(|| "row", |mut region|{
-            for round in 0..5 {
-                let mut offset = round;
+            let mut offset = 1;
+            for round in 0..5 {      
                 for idx in 0..4 {
                     let idx: usize = idx as usize;
                     let v: [Limb<F>; 5] = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
+                    offset = offset + 1;
                     chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4], &mut offset)?;
-                    for element in &v {
-                        println!("{:?}", element.value);
-                    }
+                    offset = offset + 1;
+                    // for element in &v {
+                    //     println!("{:?}", element.value);
+                    // }
                 }
             }
             Ok(())
