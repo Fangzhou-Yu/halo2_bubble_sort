@@ -83,7 +83,7 @@ impl<F: FieldExt> CompareChip<F>{
             let s_comp = meta.query_selector(s_comp);
 
             // make sure cond is 1 when result is lhs, cond is 0 when result is rhs
-            vec![s_comp*(rhs.clone() - result - cond.clone()*rhs + cond*lhs)] 
+            vec![s_comp*(lhs.clone() - result - cond.clone()*lhs + cond*rhs)] 
         });
 
         CompareConfig {
@@ -155,23 +155,16 @@ impl<F: FieldExt> CompareChip<F>{
         // check if y has 1 on first digit: 1xxxxxxx
         let y = x - (lhs.value - rhs.value);
         // this limits largest ele of nums to be 127
-        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 8); 
+        let y_bin = self.decompose_limb(region,  &Limb::new(None, y), 32); 
         let cond = y_bin[0].clone();
-        let result_1 = if cond.value == F::one() {lhs.clone()} else {rhs.clone()};
+        let result_1 = if cond.value == F::zero() {lhs.clone()} else {rhs.clone()};
         // constrain condition
         region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
         region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
         region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
         result_1.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
-        self.config.s_comp.enable(region, *offset);
-
-
+        self.config.s_comp.enable(region, *offset)?;
         let result_2 = if cond.value == F::zero() {rhs.clone()} else {lhs.clone()};
-        region.assign_advice(|| "lhs", self.config.lhs, *offset, || Ok(lhs.value))?;
-        region.assign_advice(|| "rhs", self.config.rhs, *offset, || Ok(rhs.value))?;
-        region.assign_advice(|| "cond", self.config.cond, *offset, || Ok(cond.value))?;
-        result_2.clone().cell.unwrap().copy_advice(|| "result", region, self.config.result, *offset)?;        
-        self.config.s_comp.enable(region, *offset);
 
         arr[idx] = result_1.clone();
         arr[idx+1] = result_2.clone();
@@ -315,6 +308,7 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
     ) -> Result<(), Error> {
         let chip = MainChip::construct(config.clone());
         let comp_chip = CompareChip::construct(config.clone().compareconfig);
+        // println!("{:?}", self.arr);
         let ( prev_a,  prev_b,  prev_c,  prev_d,  prev_e) = chip.load_first_row(
             layouter.namespace(|| "first row"),
             self.arr[0],
@@ -326,12 +320,15 @@ impl<F: FieldExt> Circuit<F> for BubSortCircuit<F> {
         // rows in the table
         let mut v = [prev_a, prev_b, prev_c, prev_d, prev_e];
         layouter.assign_region(|| "row", |mut region|{
-            for round in 1..5 {
+            for round in 0..5 {
                 let mut offset = round;
                 for idx in 0..4 {
                     let idx: usize = idx as usize;
-                    let v = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
+                    let v: [Limb<F>; 5] = comp_chip.select(&mut region, &mut v, &mut offset, idx)?;
                     chip.load_row(&mut region, &v[0], &v[1], &v[2], &v[3], &v[4], &mut offset)?;
+                    // for element in &v {
+                    //     println!("{:?}", element.value);
+                    // }
                 }
             }
             Ok(())
@@ -349,7 +346,7 @@ fn main(){
     let b = Fr::from(90);
     let c = Fr::from(80);
     let d = Fr::from(70);
-    let e = Fr::from(129);
+    let e = Fr::from(66);
 
     // Instantiate the circuit with the private inputs.
     let circuit = BubSortCircuit{
